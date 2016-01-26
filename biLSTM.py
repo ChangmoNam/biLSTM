@@ -1,6 +1,8 @@
 import numpy as np
 import pandas as pd
-import keras.preprocessing.text as Text
+import tensorflow as tf
+import keras.preprocessing.sequence as Sequence
+from tensorflow.models.rnn import rnn_cell
 
 
 def data_setting(_image_path,_annotation_path):
@@ -40,23 +42,77 @@ def preprocessingVoca(_caption):
     return _word2idx, _idx2word, _bias_init_vector
 
 
+def preprocessingCaption(_cap, wordtoidx):
+
+    _cap = map(lambda cap: [wordtoidx[word] for word in cap.lower().split(' ')[:-1] if word in wordtoidx], _cap)
+    max_steps = np.max(map(lambda x: len(str(x).split(' ')),_cap)) # 79
+    _cap = Sequence.pad_sequences(_cap, maxlen=max_steps+1, padding='post') # ndarray
+    _cap = Sequence.pad_sequences(_cap, maxlen=max_steps+2, padding='pre')
+
+    return _cap, max_steps
+
+
+def biLSTM(_x,_y,_mask,_weights,_biases,_config):
+
+    _x = tf.matmul(_x, _weights['img_emb']) + _biases['img_emb']
+
+    lstm = rnn_cell.BasicLSTMCell(_config.hidden)
+    state_lstm = tf.zeros([_config.batch_size, lstm.state_size])
+    output_lstm, state_lstm = lstm(_x, state_lstm) # output : h // state : concat c & h
+
+
+
+
+
+
+    return output_lstm
+
+
 class Config():
     image_path = '/data3/flickr30k/feats.npy'
     annotation_path = '/data3/flickr30k/results_20130124.token'
+    img_size = 4096
+    emb_size = 256
+    hidden = 256
+    batch_size = 128
+    epoch = 1000
+
+
+
 
 
 config = Config
+images, caption = data_setting(config.image_path,
+                               config.annotation_path) # images / caption : ndarray
 
-images, caption = data_setting(config.image_path, config.annotation_path)
-# images / caption : ndarray
 
 word2idx, idx2word, bias_init_vector = preprocessingVoca(caption)
 
 
+index = range(caption.shape[0]) # list / size = 158915
+np.random.shuffle(index)
+images = images[index]
+caption = caption[index]
 
 
+config.n_words = len(word2idx)
+cap, config.max_steps = preprocessingCaption(caption,word2idx)
 
-#index = range(caption.shape[0]) # list / size = 158915
-#np.random.shuffle(index)
-#images = images[index]
-#caption = caption[index]
+
+x = tf.placeholder(tf.float32, [config.batch_size, config.img_size])
+y = tf.placeholder(tf.int32, [config.batch_size, config.max_steps+2])
+mask = tf.placeholder(tf.float32, [config.batch_size, config.max_steps+2])
+
+
+with tf.device("/cpu:0"):
+    Wemb = tf.Variable(tf.random_normal([config.n_words, config.emb_size]))
+
+weights = {'img_emb': tf.Variable(tf.random_normal([config.img_size,config.emb_size])),
+           'out': tf.Variable(tf.random_normal([config.emb_size,config.n_words]))}
+biases = {'img_emb': tf.Variable(tf.random_normal([config.emb_size])),
+          'out': tf.Variable(tf.random_normal([config.n_words])),
+          'Wemb': tf.Variable(tf.random_normal([config.emb_size]))}
+
+
+loss = biLSTM(x, y, mask, weights, biases, config)
+
